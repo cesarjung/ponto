@@ -38,7 +38,7 @@ ABA_DESTINO_RESUMO = "Resumo_MENSAL"
 ABA_DESTINO_CONFIG = "bd_config"
 
 RANGE_FILTROS = "F2:F"
-CEL_RESUMO_TIMESTAMP_H = "H2"
+CEL_RESUMO_TIMESTAMP_H = "I2"
 B_UNICOS_START_ROW = 7
 RESUMO_UNICOS_COL = "C"   # únicos agora em Resumo_MENSAL!C7:C
 
@@ -417,9 +417,9 @@ def process_destino(gc, ss_fonte, headers, corpo_raw, d_original_list, d_normali
                 "values": [[u] for u in unicos_d_orig]
             })
 
-        # Timestamp somente em H2
+        # Timestamp somente em I2
         stamp = datetime.now(TZ_SAO_PAULO).strftime("%d/%m/%Y %H:%M:%S")
-        data_batch.append({"range": a1(ws_resumo, CEL_RESUMO_TIMESTAMP_H), "values": [[stamp]]})
+        data_batch.append({"range": a1(ws_resumo, CEL_RESUMO_TIMESTAMP_I), "values": [[stamp]]})
 
         # Envia em micro-batches (com pausa entre eles)
         sent_batches = 0
@@ -553,3 +553,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
