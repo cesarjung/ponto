@@ -9,9 +9,14 @@ Importa arquivo (Excel/CSV) do Drive para 'bd_geral' (sempre limpando antes):
 - Lotes grandes (BATCH=5000) + retry/backoff p/ evitar 429
 - Garante exclusão do temporário ao final (mesmo se der erro)
 - Logs detalhados no CMD
+
+AJUSTE: após concluir a importação, o timestamp gravado em config!A2 desta
+planilha é replicado para todas as planilhas listadas em config!I2:I, na célula
+Resumo_MENSAL!J2 de cada uma.
 """
 
 import random
+import re
 import time
 from datetime import datetime
 from typing import Any, List
@@ -245,6 +250,28 @@ def coerce_columns_to_number(block: List[List[Any]]) -> List[List[Any]]:
 # ---------------------------------------------------------
 
 
+# ======== NOVOS HELPERS PARA O AJUSTE ========
+def normalize_sheet_id(s: str) -> str:
+    """Aceita ID puro ou URL do Sheets e retorna o ID."""
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", s or "")
+    return m.group(1) if m else (s or "").strip()
+
+def read_destinations_from_config(ws_config: gspread.Worksheet, col_letter: str = "I", start_row: int = 2) -> List[str]:
+    """Lê config!I2:I e retorna IDs/URLs não vazios."""
+    vals = ws_config.get(f"{col_letter}{start_row}:{col_letter}")
+    out: List[str] = []
+    for row in vals:
+        if row and str(row[0]).strip():
+            out.append(str(row[0]).strip())
+    return out
+
+def write_timestamp_to_resumo_j2(sheets_api, spreadsheet_id: str, when_str: str):
+    """Escreve o timestamp em Resumo_MENSAL!J2 com retry/backoff."""
+    target_id = normalize_sheet_id(spreadsheet_id)
+    values_update_raw_with_retry(sheets_api, target_id, "Resumo_MENSAL!J2", [[when_str]])
+# ==============================================
+
+
 def importar_excel_para_bd_geral():
     log("🚀 Iniciando importação…")
     gc, drive, sheets_api = auth_clients()
@@ -310,6 +337,22 @@ def importar_excel_para_bd_geral():
         agora = datetime.now(TZ).strftime("%d/%m/%Y %H:%M:%S")
         write_cell(ws_config, "A2", agora)
         write_cell(ws_config, "B2", f"Concluído em {agora}")
+
+        # ===== NOVO: replicar timestamp em todas as planilhas listadas em config!I2:I =====
+        log("↗️ Replicando timestamp em Resumo_MENSAL!J2 das planilhas listadas em config!I…")
+        destinos = read_destinations_from_config(ws_config, col_letter="I", start_row=2)
+        if not destinos:
+            log("⚠️ Nenhum destino encontrado em config!I2:I (nada a replicar).")
+        else:
+            ok, fail = 0, 0
+            for dst in destinos:
+                try:
+                    write_timestamp_to_resumo_j2(sheets_api, dst, agora)
+                    ok += 1
+                except Exception as e:
+                    fail += 1
+                    log(f"❌ Falha ao escrever timestamp em '{dst}': {e}")
+            log(f"✅ Replicação concluída — sucesso: {ok}, falhas: {fail}")
 
     finally:
         # Garantia de limpeza do temporário mesmo em caso de erro
