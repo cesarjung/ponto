@@ -15,6 +15,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -23,8 +24,30 @@ jobs:
       - name: criar credenciais.json
         shell: bash
         run: |
-          printf '%s' "${{ secrets.GOOGLE_CREDENTIALS }}" > credenciais.json
-          python -c "import json; json.load(open('credenciais.json','r',encoding='utf-8')); print('OK credenciais.json')"
+          python - <<'PY'
+          import os, json, base64, sys
+          raw = os.environ.get('GOOGLE_CREDENTIALS','').strip()
+          if not raw:
+              print("❌ Secret GOOGLE_CREDENTIALS vazio"); sys.exit(1)
+          def try_json(s):
+              try: return json.loads(s)
+              except: return None
+          data = try_json(raw)
+          if data is None:
+              try:
+                  dec = base64.b64decode(raw).decode('utf-8')
+              except Exception:
+                  print("❌ Conteúdo não é JSON nem base64 válido."); sys.exit(1)
+              data = try_json(dec)
+              if data is None:
+                  print("❌ Base64 decodificado não é JSON válido."); sys.exit(1)
+          if 'private_key' in data and isinstance(data['private_key'], str):
+              data['private_key'] = data['private_key'].replace('\\n','\n')
+          open('credenciais.json','w',encoding='utf-8').write(json.dumps(data))
+          print("✅ credenciais.json OK")
+          PY
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
 
       - name: Install deps
         run: pip install -r requirements.txt
