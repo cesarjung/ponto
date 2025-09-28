@@ -1,0 +1,23 @@
+name: importar_bd_geral
+on:
+  schedule: [ { cron: "0 10,12 * * *" } ]  # 07:00 e 09:00 America/Sao_Paulo
+  workflow_dispatch:
+env:
+  TZ: America/Sao_Paulo
+  PYTHONUNBUFFERED: "1"
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: "pip" }
+      - name: credenciais.json
+        shell: bash
+        run: |
+          cat > credenciais.json <<'JSON'
+${{ secrets.GOOGLE_CREDENTIALS }}
+JSON
+      - run: pip install -r requirements.txt
+      - run: python Importar_BD_Geral.py
