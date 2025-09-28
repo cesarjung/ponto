@@ -38,7 +38,7 @@ ABA_DESTINO_RESUMO = "Resumo_MENSAL"
 ABA_DESTINO_CONFIG = "bd_config"
 
 RANGE_FILTROS = "F2:F"
-CEL_RESUMO_TIMESTAMP_H = "I2"
+CEL_RESUMO_TIMESTAMP_H = "I2"   # <-- alterado para I2
 B_UNICOS_START_ROW = 7
 RESUMO_UNICOS_COL = "C"   # únicos agora em Resumo_MENSAL!C7:C
 
@@ -86,11 +86,9 @@ def auth_gspread():
 def get_http_status(err: Exception) -> int | None:
     if isinstance(err, APIError):
         try:
-            # gspread >= 6 expõe .response
             return getattr(err, "response", None).status_code  # type: ignore[attr-defined]
         except Exception:
             pass
-    # fallback: extrair do texto "[429]" etc.
     m = re.search(r"\[(\d{3})\]", str(err))
     if m:
         try:
@@ -104,7 +102,6 @@ def is_transient_error(err: Exception) -> bool:
     msg  = str(err).lower()
     if code in {429, 500, 502, 503, 504}:
         return True
-    # alguns provedores retornam msg despadronizada
     if "quota exceeded" in msg or "service is currently unavailable" in msg:
         return True
     return False
@@ -121,7 +118,6 @@ def with_retry(fn, *args, **kwargs):
             code = get_http_status(e)
             if not transient or i == MAX_RETRIES:
                 raise
-            # 429: espera mais
             extra = 0.0
             if code == 429:
                 extra = RATE_LIMIT_COOLDOWN_BASE * i
@@ -289,25 +285,23 @@ def chunk_data_batch(entries, max_cells=MAX_CELLS_PER_BATCH):
 # ==========================
 def process_destino(gc, ss_fonte, headers, corpo_raw, d_original_list, d_normalized_list, ncols, dest):
     """Processa 1 destino. Retorna True se concluiu, False se falha não-transitória."""
-    # Abertura do destino e abas
     ss_dest, ssid = safe_open_spreadsheet(gc, dest)
     ws_resumo     = safe_get_worksheet(ss_dest, ABA_DESTINO_RESUMO)
     ws_bd_config  = safe_get_worksheet(ss_dest, ABA_DESTINO_CONFIG, create_if_missing=True)
     ws_bd_dest    = safe_get_worksheet(ss_dest, ABA_DESTINO_DADOS,  create_if_missing=True)
 
-    # Colunas presentes (evita acessar fora do header)
     time_cols_present = sorted([c for c in TIME_COLS if letter_to_index(c) < ncols], key=lambda x: letter_to_index(x))
     num_cols_present  = sorted([c for c in NUMBER_COLS if letter_to_index(c) < ncols], key=lambda x: letter_to_index(x))
 
     print(f"🎯 Destino: {dest}")
 
-    # ===== Lê filtros (retry robusto) =====
+    # ===== Lê filtros =====
     try:
         filtros_vals = get_range_with_retry(ws_bd_config, RANGE_FILTROS)
     except Exception as e:
         print(f"❌ Erro lendo '{ABA_DESTINO_CONFIG}!{RANGE_FILTROS}' em {ssid}: {e}")
         if is_transient_error(e):
-            raise  # deixa o chamador reprocessar o destino
+            raise
         return False
 
     filtros_norm = []
@@ -320,7 +314,7 @@ def process_destino(gc, ss_fonte, headers, corpo_raw, d_original_list, d_normali
 
     if not filtros_set:
         print(f"⚠️ Sem filtros em '{ABA_DESTINO_CONFIG}!{RANGE_FILTROS}'. Pulando destino.")
-        return True  # não é erro
+        return True
 
     # ===== Filtra pela coluna D (contém) =====
     linhas_filtradas = []
@@ -339,7 +333,7 @@ def process_destino(gc, ss_fonte, headers, corpo_raw, d_original_list, d_normali
     print(f"   • Filtros: {sorted(filtros_set)}")
     print(f"   • Linhas filtradas: {total}")
 
-    # ===== Converte tipos (sem apóstrofo) =====
+    # ===== Converte tipos =====
     conv_rows = []
     for r in linhas_filtradas:
         r2 = r[:]
@@ -388,7 +382,6 @@ def process_destino(gc, ss_fonte, headers, corpo_raw, d_original_list, d_normali
         max_clear_b = max(len(unicos_b), 1)
         clear_end_b = B_UNICOS_START_ROW + max_clear_b + 200
 
-        # Limpa C7:C
         clear_rng_resumo = a1(ws_resumo, f"{RESUMO_UNICOS_COL}{B_UNICOS_START_ROW}:{RESUMO_UNICOS_COL}{clear_end_b}")
         if not try_batch_clear(ws_resumo, [f"{RESUMO_UNICOS_COL}{B_UNICOS_START_ROW}:{RESUMO_UNICOS_COL}"]):
             data_batch.append({
@@ -396,7 +389,6 @@ def process_destino(gc, ss_fonte, headers, corpo_raw, d_original_list, d_normali
                 "values": [[""] for _ in range(clear_end_b - B_UNICOS_START_ROW + 1)]
             })
 
-        # Escreve os únicos em C7:C
         if unicos_b:
             data_batch.append({
                 "range": a1(ws_resumo, f"{RESUMO_UNICOS_COL}{B_UNICOS_START_ROW}:{RESUMO_UNICOS_COL}{B_UNICOS_START_ROW + len(unicos_b) - 1}"),
@@ -417,18 +409,17 @@ def process_destino(gc, ss_fonte, headers, corpo_raw, d_original_list, d_normali
                 "values": [[u] for u in unicos_d_orig]
             })
 
-        # Timestamp somente em I2
+        # Timestamp agora em I2
         stamp = datetime.now(TZ_SAO_PAULO).strftime("%d/%m/%Y %H:%M:%S")
-        data_batch.append({"range": a1(ws_resumo, CEL_RESUMO_TIMESTAMP_I), "values": [[stamp]]})
+        data_batch.append({"range": a1(ws_resumo, CEL_RESUMO_TIMESTAMP_H), "values": [[stamp]]})
 
-        # Envia em micro-batches (com pausa entre eles)
+        # Envia em micro-batches
         sent_batches = 0
         for part in chunk_data_batch(data_batch, max_cells=MAX_CELLS_PER_BATCH):
             values_batch_update(ss_dest, part, value_input_option="RAW")
             sent_batches += 1
             total_cells = sum(count_cells_in_entry(x) for x in part)
             print(f"   • Lote {sent_batches} enviado ({total_cells} células).")
-            # Pausa curta para não estourar write/min
             time.sleep(SLEEP_BETWEEN_BATCHES)
         if sent_batches == 0:
             values_batch_update(ss_dest, data_batch, value_input_option="RAW")
@@ -450,7 +441,6 @@ def process_destino(gc, ss_fonte, headers, corpo_raw, d_original_list, d_normali
 
     except Exception as e:
         if is_transient_error(e):
-            # sinaliza para o chamador tentar de novo o destino inteiro
             raise
         print(f"❌ Falha não-transitória no destino {ssid}: {e}")
         return False
@@ -508,7 +498,6 @@ def main():
                 if is_transient_error(e) and attempt < DEST_RETRIES:
                     code = get_http_status(e)
                     print(f"   • Falha transitória destino (HTTP {code}). Tentativa {attempt}/{DEST_RETRIES}.")
-                    # cooldown extra em 429 para dar margem na cota por minuto
                     extra = RATE_LIMIT_COOLDOWN_BASE * attempt if code == 429 else 0.0
                     retry_sleep(attempt, extra=extra)
                     continue
@@ -516,7 +505,6 @@ def main():
                 break
         if not sucesso:
             pendentes.append(dest)
-        # pausa entre destinos para baixar write/min
         time.sleep(SLEEP_BETWEEN_DESTINOS)
 
     round_idx = 1
@@ -553,4 +541,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
