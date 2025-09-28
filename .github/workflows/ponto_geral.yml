@@ -1,6 +1,6 @@
 name: ponto_geral
 on:
-  schedule: [{ cron: "0 9,11 * * *" }]  # 06:00 e 08:00 America/Sao_Paulo (UTC-3)
+  schedule: [{ cron: "0 9,11 * * *" }]   # 06:00 e 08:00 America/Sao_Paulo
   workflow_dispatch:
 env:
   TZ: America/Sao_Paulo
@@ -19,8 +19,6 @@ jobs:
         shell: bash
         run: |
           printf '%s' "${{ secrets.GOOGLE_CREDENTIALS }}" > credenciais.json
-          python - <<'PY'
-import json; json.load(open('credenciais.json','r',encoding='utf-8')); print("✅ credenciais.json OK")
-PY
+          python -c "import json; json.load(open('credenciais.json','r',encoding='utf-8')); print('OK credenciais.json')"
       - run: pip install -r requirements.txt
       - run: python ponto_geral.py
