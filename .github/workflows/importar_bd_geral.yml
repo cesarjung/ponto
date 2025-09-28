@@ -1,26 +1,56 @@
 name: importar_bd_geral
+
 on:
-  schedule: [{ cron: "0 10,12 * * *" }]  # 07:00 e 09:00 America/Sao_Paulo (UTC-3)
+  schedule:
+    - cron: "0 10,12 * * *"  # 07:00 e 09:00 America/Sao_Paulo (UTC-3)
   workflow_dispatch:
+
 env:
   TZ: America/Sao_Paulo
   PYTHONUNBUFFERED: "1"
+
 jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
+
       - name: criar credenciais.json
         shell: bash
         run: |
-          printf '%s' "${{ secrets.GOOGLE_CREDENTIALS }}" > credenciais.json
           python - <<'PY'
-import json; json.load(open('credenciais.json','r',encoding='utf-8')); print("✅ credenciais.json OK")
-PY
-      - run: pip install -r requirements.txt
-      - run: python Importar_BD_Geral.py
+          import os, json, base64, sys
+          raw = os.environ.get('GOOGLE_CREDENTIALS','').strip()
+          if not raw:
+              print("❌ Secret GOOGLE_CREDENTIALS vazio"); sys.exit(1)
+          def try_json(s):
+              try: return json.loads(s)
+              except: return None
+          data = try_json(raw)
+          if data is None:
+              try:
+                  dec = base64.b64decode(raw).decode('utf-8')
+              except Exception:
+                  print("❌ Conteúdo não é JSON nem base64 válido."); sys.exit(1)
+              data = try_json(dec)
+              if data is None:
+                  print("❌ Base64 decodificado não é JSON válido."); sys.exit(1)
+          if 'private_key' in data and isinstance(data['private_key'], str):
+              data['private_key'] = data['private_key'].replace('\\n','\n')
+          open('credenciais.json','w',encoding='utf-8').write(json.dumps(data))
+          print("✅ credenciais.json OK")
+          PY
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run script
+        run: python Importar_BD_Geral.py
